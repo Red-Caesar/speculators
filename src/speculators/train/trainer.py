@@ -211,23 +211,19 @@ class Trainer:
                 self.scheduler.step()
 
             if self.is_distributed:
-                # Reduce only metrics that exist on all ranks
-                for k in list(metrics.keys()):
-                    if k.startswith("accuracy_depth_"):
-                        # Per-depth metrics may not exist on all ranks, skip
-                        continue
+                for k in metrics:
                     dist.reduce(metrics[k], dst=0, op=dist.ReduceOp.AVG)
 
             metrics_dict = {k: v.item() for k, v in metrics.items()}
 
-            # Separate per-depth metrics for compact logging
-            depth_metrics = {
-                k: v for k, v in metrics_dict.items() if k.startswith("accuracy_depth_")
+            # Separate per-position metrics for compact logging
+            position_metrics = {
+                k: v for k, v in metrics_dict.items() if k.startswith("position ")
             }
             base_metrics = {
                 k: v
                 for k, v in metrics_dict.items()
-                if not k.startswith("accuracy_depth_")
+                if not k.startswith("position ")
             }
 
             metric_logger.info(
@@ -235,12 +231,12 @@ class Trainer:
                 extra={"step": self.global_step},
             )
 
-            if depth_metrics and self.local_rank == 0:
-                depth_items = sorted(depth_metrics.items())
-                depth_str = ", ".join(
-                    f"d{k.split('_')[-1]}:{v:.3f}" for k, v in depth_items
+            if position_metrics and self.local_rank == 0:
+                position_items = sorted(position_metrics.items())
+                position_str = ", ".join(
+                    f"{k}: {v:.3f}" for k, v in position_items
                 )
-                root_logger.info(f"    Depth accuracy: [{depth_str}]")
+                root_logger.info(f"    Position accuracy: [{position_str}]")
 
             self.global_step += 1
 
@@ -270,11 +266,7 @@ class Trainer:
             )
 
             if self.is_distributed:
-                # Reduce only metrics that exist on all ranks
-                for k in list(metrics.keys()):
-                    if k.startswith("accuracy_depth_"):
-                        # Per-depth metrics may not exist on all ranks, skip
-                        continue
+                for k in metrics:
                     dist.reduce(metrics[k], dst=0, op=dist.ReduceOp.AVG)
 
             for k, v in metrics.items():
@@ -282,21 +274,23 @@ class Trainer:
 
         val_metrics = {f"{k}_epoch": v / num_batches for k, v in val_metrics.items()}
 
-        depth_metrics = {k: v for k, v in val_metrics.items() if "accuracy_depth_" in k}
+        position_metrics = {
+            k: v for k, v in val_metrics.items() if "position " in k
+        }
         base_metrics = {
-            k: v for k, v in val_metrics.items() if "accuracy_depth_" not in k
+            k: v for k, v in val_metrics.items() if "position " not in k
         }
 
         metric_logger.info(
             {"val": base_metrics, "epoch": epoch}, extra={"step": self.global_step}
         )
 
-        if depth_metrics and self.local_rank == 0:
-            depth_items = sorted(depth_metrics.items())
-            depth_str = ", ".join(
-                f"d{k.split('_')[-2]}:{v:.3f}" for k, v in depth_items
+        if position_metrics and self.local_rank == 0:
+            position_items = sorted(position_metrics.items())
+            position_str = ", ".join(
+                f"{k}: {v:.3f}" for k, v in position_items
             )
-            root_logger.info(f"    Validation depth accuracy: [{depth_str}]")
+            root_logger.info(f"    Validation position accuracy: [{position_str}]")
 
         return val_metrics
 

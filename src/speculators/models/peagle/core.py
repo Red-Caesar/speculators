@@ -12,6 +12,7 @@ from speculators.models.eagle3.core import Eagle3DraftModel
 from speculators.models.peagle.attention import create_peagle_mask_mod
 from speculators.models.peagle.config import PEagleSpeculatorConfig
 from speculators.models.peagle.data import generate_cod_sample_indices
+from speculators.models.peagle.metrics import compute_metrics
 from speculators.proposals.greedy import GreedyTokenProposalConfig
 
 
@@ -29,9 +30,6 @@ class PEagleDraftModel(Eagle3DraftModel):
         layers: Transformer decoder layers from EAGLE-3
         para_depths: Number of parallel prediction depths (groups)
     """
-
-    # Epsilon for numerical stability in loss normalization
-    LOSS_EPSILON: ClassVar[float] = 1e-5
 
     config_class: ClassVar[type[PEagleSpeculatorConfig]] = PEagleSpeculatorConfig  # type: ignore[misc]
     _attn_implementation_name: ClassVar[str] = "peagle_flex_attention"
@@ -56,7 +54,7 @@ class PEagleDraftModel(Eagle3DraftModel):
         self.para_depths = config.para_depths
         self.down_sample_ratio = config.down_sample_ratio
         self.down_sample_ratio_min = config.down_sample_ratio_min
-        self.ptd_token_id = config.ptd_token_id
+        self.mask_token_id = config.mask_token_id
         self.max_seq_len = config.max_seq_len
 
         self.lm_head.weight.requires_grad = False
@@ -180,7 +178,7 @@ class PEagleDraftModel(Eagle3DraftModel):
 
         pad = torch.full(
             (input_ids.shape[0], input_ids.shape[1] * (para_depth - 1)),
-            self.ptd_token_id,
+            self.mask_token_id,
             dtype=input_ids.dtype,
             device=input_ids.device,
         )
@@ -267,112 +265,16 @@ class PEagleDraftModel(Eagle3DraftModel):
         targets_full = targets.repeat(1, para_depth, 1)
         targets = targets_full[:, all_indices, :]
 
-        # Loss is normalized by total token count across all depths, so deeper
-        # depths with fewer sampled tokens naturally contribute less gradient.
-        with torch.no_grad():
-            target_probs = torch.nn.functional.softmax(targets, dim=-1)
-
-        # Compute loss using KL divergence (like EAGLE3)
-        logits_log_softmax = torch.nn.functional.log_softmax(logits, dim=-1)
-        per_token_pred_loss = (
-            torch.nn.functional.kl_div(
-                logits_log_softmax.reshape(-1, logits.shape[-1]),
-                target_probs.reshape(-1, target_probs.shape[-1]),
-                reduction="none",
-                log_target=False,
-            )
-            .sum(dim=-1)
-            .reshape(logits.shape[0], logits.shape[1])
-        )  # [1, len(all_indices)]
-
-        # Pre-compute correctness for accuracy (no gradients needed)
-        with torch.no_grad():
-            pred_tokens = torch.argmax(logits, dim=-1)
-            target_tokens = torch.argmax(target_probs, dim=-1)
-            correct = (pred_tokens == target_tokens).float()
-
-            if loss_mask is not None:
-                while loss_mask.ndim > 2:
-                    loss_mask = loss_mask.squeeze(1)
-
-        # Compute loss across all depths with a single normalizer so that
-        # deeper depths (fewer tokens from COD sampling) naturally contribute
-        # less gradient, matching the p-eagle-train reference implementation.
-        total_masked_loss = 0.0
-        total_correct = 0.0
-        total_tokens = 0.0
-        start_idx = 0
-
-        for _depth, indices in enumerate(sample_indices):
-            num_samples = len(indices)
-            end_idx = start_idx + num_samples
-
-            depth_pred_loss = per_token_pred_loss[:, start_idx:end_idx]
-
-            if loss_mask is not None:
-                depth_loss_mask = loss_mask[:, indices]
-                depth_pred_loss = depth_pred_loss * depth_loss_mask
-
-                depth_correct = correct[:, start_idx:end_idx]
-                total_correct += (depth_correct * depth_loss_mask).sum()
-                total_tokens += depth_loss_mask.sum()
-            else:
-                total_tokens += num_samples
-
-            total_masked_loss += depth_pred_loss.sum()
-
-            start_idx = end_idx
-
-        prediction_loss = total_masked_loss / (total_tokens + self.LOSS_EPSILON)
-
-        loss = self.config.prediction_loss_weight * prediction_loss
-
-        with torch.no_grad():
-            if loss_mask is not None:
-                accuracy = total_correct / (total_tokens + self.LOSS_EPSILON)
-                num_tokens = total_tokens
-            else:
-                num_tokens = correct.numel()
-                accuracy = correct.sum() / (num_tokens + self.LOSS_EPSILON)
-
-            # Compute per-depth accuracy for debugging
-            per_position_accuracy = {}
-            depths = all_indices // seq_length
-            pred_tokens_flat = pred_tokens.squeeze(0)
-            target_tokens_flat = target_tokens.squeeze(0)
-
-            for depth in range(min(para_depth, 10)):
-                depth_mask = depths == depth
-                if depth_mask.sum() > 0:
-                    depth_correct = (
-                        (pred_tokens_flat == target_tokens_flat).float()
-                        * depth_mask.float()
-                    ).sum()
-                    depth_total = depth_mask.sum().float()
-                    depth_accuracy = depth_correct / (depth_total + self.LOSS_EPSILON)
-                    per_position_accuracy[f"accuracy_depth_{depth}"] = (
-                        depth_accuracy.detach()
-                    )
-
-        metrics = {
-            "loss": loss.detach(),
-            "prediction_loss": prediction_loss.detach()
-            if isinstance(prediction_loss, torch.Tensor)
-            else torch.tensor(prediction_loss, device=loss.device),
-            "accuracy": accuracy.detach(),
-            "num_tokens": num_tokens.detach()
-            if isinstance(num_tokens, torch.Tensor)
-            else torch.tensor(num_tokens, device=loss.device),
-            **per_position_accuracy,
-        }
-
-        if sample_indices is not None:
-            first_depth_len = len(sample_indices[0])
-            draft_tokens = torch.argmax(
-                logits[:, :first_depth_len], dim=-1
-            )  # [1, first_depth_len]
-        else:
-            draft_tokens = torch.argmax(logits[:, :seq_length], dim=-1)  # [1, seq_len]
+        loss, draft_tokens, metrics = compute_metrics(
+            logits=logits,
+            targets=targets,
+            loss_mask=loss_mask,
+            sample_indices=sample_indices,
+            all_indices=all_indices,
+            seq_length=seq_length,
+            para_depth=para_depth,
+            prediction_loss_weight=self.config.prediction_loss_weight,
+        )
 
         return draft_tokens, loss, metrics
 
@@ -410,7 +312,7 @@ class PEagleDraftModel(Eagle3DraftModel):
             para_depths=kwargs.get("para_depths", 8),
             down_sample_ratio=kwargs.get("down_sample_ratio", 0.7),
             down_sample_ratio_min=kwargs.get("down_sample_ratio_min", 0.2),
-            ptd_token_id=kwargs.get("ptd_token_id", 0),
+            mask_token_id=kwargs.get("mask_token_id"),
             max_seq_len=kwargs.get("max_seq_len", 2048),
             prediction_loss_weight=kwargs.get("prediction_loss_weight", 1.0),
             speculators_config=SpeculatorsConfig(
