@@ -47,7 +47,7 @@ from speculators.data_generation.vllm_hidden_states_generator import (  # noqa: 
 )
 
 # Constants
-MAX_IO_WORKERS = 4  # Number of parallel file save operations
+MAX_IO_WORKERS = 8  # Number of parallel file save operations
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -197,7 +197,7 @@ def find_last_checkpoint(output_dir: str) -> int:
 
 def save_sample_to_disk(data_dict, output_path):
     """Save a single sample to disk for async execution."""
-    torch.save(data_dict, output_path)
+    torch.save(data_dict, output_path, _use_new_zipfile_serialization=True)
     return output_path
 
 
@@ -297,7 +297,7 @@ def generate_and_save_hidden_states(args, dataset):
                 result_cleaned = {
                     "input_ids": result["input_ids"],
                     "hidden_states": [h.contiguous() for h in result["hidden_states"]],
-                    "loss_mask": loss_mask,
+                    "loss_mask": torch.as_tensor(loss_mask, dtype=torch.bool),
                 }
                 output_path = Path(args.output_dir) / f"data_{file_idx}.pt"
                 future = thread_executor.submit(

@@ -1,4 +1,5 @@
 import argparse
+import json
 import random
 import warnings
 
@@ -138,6 +139,10 @@ def create_transformer_layer_config(
 
 
 def main(args: argparse.Namespace):
+    # Parse JSON rope_scaling_config string if provided
+    if args.rope_scaling_config is not None:
+        args.rope_scaling_config = json.loads(args.rope_scaling_config)
+
     # Set random seed for reproducibility
     set_seed(args.seed, args.deterministic_cuda)
 
@@ -324,6 +329,43 @@ def parse_args():
     parser.add_argument("--scheduler-warmup-steps", type=int, default=None)
     parser.add_argument("--scheduler-total-steps", type=int, default=None)
     parser.add_argument("--scheduler-num-cosine-cycles", type=float, default=0.5)
+    # Eagle3LC RoPE options
+    parser.add_argument(
+        "--rope-method",
+        type=str,
+        default="full",
+        choices=["full", "yarn", "llama3", "partial"],
+        help=(
+            "RoPE variant for eagle3_lc speculator. "
+            "full: standard Eagle3 RoPE (no change). "
+            "yarn: YaRN frequency scaling (requires --rope-scaling-config). "
+            "llama3: Llama-3.1 RoPE scaling (requires --rope-scaling-config). "
+            "partial: Qwen3-style partial RoPE applying rotation to the first "
+            "rope-partial-factor fraction of head dimensions."
+        ),
+    )
+    parser.add_argument(
+        "--rope-scaling-config",
+        type=str,
+        default=None,
+        help=(
+            "JSON string with RoPE scaling parameters for yarn or llama3 methods. "
+            "Example yarn: '{\"rope_type\": \"yarn\", \"factor\": 4.0, "
+            "\"original_max_position_embeddings\": 8192}'. "
+            "Example llama3: '{\"rope_type\": \"llama3\", \"factor\": 8.0, "
+            "\"low_freq_factor\": 1.0, \"high_freq_factor\": 4.0, "
+            "\"original_max_position_embeddings\": 8192}'."
+        ),
+    )
+    parser.add_argument(
+        "--rope-partial-factor",
+        type=float,
+        default=0.25,
+        help=(
+            "Fraction of head dimensions to apply RoPE to when --rope-method=partial "
+            "Default: 0.25 (first 25%% of head dimensions)."
+        ),
+    )
     return parser.parse_args()
 
 

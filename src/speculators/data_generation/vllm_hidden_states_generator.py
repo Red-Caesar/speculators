@@ -34,8 +34,8 @@ __all__ = ["VllmHiddenStatesGenerator"]
 # Constants
 CACHE_MEMORY_FRACTION = 0.2  # Fraction of GPU memory for KV cache
 VLLM_BLOCK_SIZE = 128 if is_npu_available() else 16  # Block size for KV cache
-MAX_NUM_SEQS = 32  # Maximum sequences for prefill-only workload
-MIN_MAX_BATCHED_TOKENS = 8192  # Minimum batched tokens threshold
+MAX_NUM_SEQS = 256  # Maximum sequences for prefill-only workload
+MIN_MAX_BATCHED_TOKENS = 16384  # Minimum batched tokens threshold
 MAX_DECODE_TOKENS = 1  # Maximum tokens to generate (prefill only)
 SAMPLING_TEMPERATURE = 0.0  # Temperature for sampling (greedy)
 INITIAL_ARRIVAL_TIME = 0.0  # Initial request arrival time
