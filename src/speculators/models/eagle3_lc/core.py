@@ -8,7 +8,7 @@ from speculators.config import SpeculatorsConfig, VerifierConfig
 from speculators.model import SpeculatorModel
 from speculators.models.eagle3.core import Eagle3DraftModel
 from speculators.models.eagle3_lc.config import Eagle3LCSpeculatorConfig
-from speculators.models.eagle3_lc.rotary import PartialRotaryEmbedding
+from speculators.models.eagle3_lc.rotary import DynamicYaRNRotaryEmbedding, PartialRotaryEmbedding
 from speculators.proposals.greedy import GreedyTokenProposalConfig
 
 
@@ -23,8 +23,10 @@ class Eagle3LCDraftModel(Eagle3DraftModel):
     Supported methods:
 
     - "full" — identical to vanilla Eagle3 (baseline)
-    - "yarn" — YaRN frequency scaling; ``rope_scaling_config`` must include
+    - "yarn" — static YaRN frequency scaling; ``rope_scaling_config`` must include
                       ``{"rope_type": "yarn", "factor": ..., "original_max_position_embeddings": ...}``
+    - "dynamic_yarn" — YaRN that reverts to standard RoPE for short sequences;
+                      same ``rope_scaling_config`` format as "yarn"
     - "llama3" — Llama-3.1 scaling; ``rope_scaling_config`` must include
                       ``{"rope_type": "llama3", "factor": ..., "low_freq_factor": ...,
                       "high_freq_factor": ..., "original_max_position_embeddings": ...}``
@@ -53,6 +55,13 @@ class Eagle3LCDraftModel(Eagle3DraftModel):
                 self.rotary_emb = self._model_definitions.rotary_emb_class(
                     modified_config
                 )
+
+            case "dynamic_yarn":
+                modified_config = copy.copy(modified_config)
+                modified_config._original_rope_scaling = getattr(modified_config, "rope_scaling", None)
+                if config.rope_scaling_config is not None:
+                    modified_config.rope_scaling = config.rope_scaling_config
+                self.rotary_emb = DynamicYaRNRotaryEmbedding(modified_config)
 
             case "partial":
                 base_emb = self._model_definitions.rotary_emb_class(modified_config)

@@ -19,9 +19,13 @@ class Eagle3LCSpeculatorConfig(Eagle3SpeculatorConfig):
     positional encoding strategies:
 
     - "full" — standard Eagle3 RoPE (baseline, no change)
-    - "yarn" — YaRN frequency-domain scaling; requires ``rope_scaling_config``
+    - "yarn" — static YaRN frequency-domain scaling; requires ``rope_scaling_config``
                 with keys ``factor``, ``original_max_position_embeddings``,
                 and optionally ``beta_fast``/``beta_slow``
+    - "dynamic_yarn" — YaRN that reverts to standard RoPE for sequences shorter than
+                ``original_max_position_embeddings``, eliminating the short-context
+                penalty of static YaRN; requires the same ``rope_scaling_config`` as
+                "yarn"
     - "llama3" — Llama-3.1 RoPE scaling; requires ``rope_scaling_config``
                       with keys ``factor``, ``low_freq_factor``,
                       ``high_freq_factor``, ``original_max_position_embeddings``
@@ -40,7 +44,7 @@ class Eagle3LCSpeculatorConfig(Eagle3SpeculatorConfig):
         description="Model architectures that can load these weights",
     )
 
-    rope_method: Literal["full", "yarn", "llama3", "partial"] = Field(
+    rope_method: Literal["full", "yarn", "dynamic_yarn", "llama3", "partial"] = Field(
         default="full",
         description="RoPE variant to use for long-context training",
     )

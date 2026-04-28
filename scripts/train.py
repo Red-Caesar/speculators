@@ -334,11 +334,13 @@ def parse_args():
         "--rope-method",
         type=str,
         default="full",
-        choices=["full", "yarn", "llama3", "partial"],
+        choices=["full", "yarn", "dynamic_yarn", "llama3", "partial"],
         help=(
             "RoPE variant for eagle3_lc speculator. "
             "full: standard Eagle3 RoPE (no change). "
-            "yarn: YaRN frequency scaling (requires --rope-scaling-config). "
+            "yarn: static YaRN frequency scaling (requires --rope-scaling-config). "
+            "dynamic_yarn: YaRN that reverts to standard RoPE for short sequences "
+            "(requires --rope-scaling-config). "
             "llama3: Llama-3.1 RoPE scaling (requires --rope-scaling-config). "
             "partial: Qwen3-style partial RoPE applying rotation to the first "
             "rope-partial-factor fraction of head dimensions."

@@ -1,9 +1,71 @@
+import copy
+
 import torch
 from torch import nn
+from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding
+from transformers.modeling_rope_utils import (
+    ROPE_INIT_FUNCTIONS,
+    _compute_default_rope_parameters,
+    _compute_yarn_parameters,
+)
 
 __all__ = [
+    "DynamicYaRNRotaryEmbedding",
     "PartialRotaryEmbedding",
 ]
+
+
+class DynamicYaRNRotaryEmbedding(LlamaRotaryEmbedding):
+    """YaRN rotary embedding that applies frequency scaling only beyond the original context length.
+
+    For sequences up to ``original_max_position_embeddings`` (taken from the YaRN
+    ``rope_scaling`` config dict), the base model's own RoPE frequencies are used —
+    matching what the verifier and baseline draft model use at short contexts.  For
+    longer sequences the YaRN-scaled frequencies are computed on demand and cached.
+    When the sequence length drops back below the original limit the frequencies are
+    reset to the base values.
+
+    This eliminates the short-context accuracy penalty of static YaRN while retaining
+    its long-context extension properties.  The dynamic update logic is handled by the
+    ``dynamic_rope_update`` decorator inherited from ``LlamaRotaryEmbedding.forward``;
+    setting ``rope_type = "dynamic_yarn"`` satisfies the ``"dynamic" in self.rope_type``
+    check inside that decorator.
+
+    The config is expected to carry a ``_original_rope_scaling`` attribute (set by
+    ``Eagle3LCDraftModel._setup_rotary_embedding``) containing the verifier model's
+    own ``rope_scaling`` dict.  When present, those base frequencies are used as the
+    short-context default so the draft stays aligned with the verifier.
+
+    :param config: Model config with ``rope_scaling`` set to the YaRN parameters.
+        Should also carry ``_original_rope_scaling`` with the verifier's native scaling.
+    :param device: Optional device for frequency initialisation.
+    """
+
+    def __init__(self, config, device=None):
+        nn.Module.__init__(self)
+        self.rope_type = "dynamic_yarn"
+        rope_scaling = getattr(config, "rope_scaling", None) or {}
+        original_max = rope_scaling.get(
+            "original_max_position_embeddings",
+            config.max_position_embeddings,
+        )
+        self.max_seq_len_cached = original_max
+        self.original_max_seq_len = original_max
+        self.config = config
+        self.rope_init_fn = _compute_yarn_parameters
+
+        original_rope_scaling = getattr(config, "_original_rope_scaling", None)
+        if original_rope_scaling is not None:
+            base_config = copy.copy(config)
+            base_config.rope_scaling = original_rope_scaling
+            base_rope_type = original_rope_scaling.get("rope_type", "default")
+            base_init_fn = ROPE_INIT_FUNCTIONS.get(base_rope_type, _compute_default_rope_parameters)
+            inv_freq, self.attention_scaling = base_init_fn(base_config, device)
+        else:
+            inv_freq, self.attention_scaling = _compute_default_rope_parameters(config, device)
+
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.original_inv_freq = self.inv_freq
 
 
 class PartialRotaryEmbedding(nn.Module):
