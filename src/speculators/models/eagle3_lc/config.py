@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -58,10 +58,18 @@ class Eagle3LCSpeculatorConfig(Eagle3SpeculatorConfig):
         ),
     )
 
-    rope_partial_factor: float = Field(
-        default=0.25,
+    rope_partial_factor: float | None = Field(
+        default=None,
         description=(
             "Fraction of head dimensions to apply RoPE to when rope_method='partial'. "
-            "Remaining dimensions carry no positional information (Qwen3 style)."
+            "Remaining dimensions carry no positional information (Qwen3 style). "
+            "Ignored and omitted from the saved config for all other rope_method values."
         ),
     )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Exclude ``rope_partial_factor`` from the serialised config when it is not used."""
+        d = super().to_dict()
+        if self.rope_method != "partial":
+            d.pop("rope_partial_factor", None)
+        return d

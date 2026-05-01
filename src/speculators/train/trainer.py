@@ -174,6 +174,14 @@ class Trainer:
                 **gpu_batch, **self.config.train_call_kwargs
             )
 
+            if torch.isnan(loss) or torch.isinf(loss):
+                root_logger.warning(
+                    f"NaN/Inf loss at step {self.global_step}, skipping batch."
+                )
+                self.opt.zero_grad()
+                self.global_step += 1
+                continue
+
             self.opt.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)

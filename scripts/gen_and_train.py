@@ -320,6 +320,8 @@ def run_e2e(
         "save-path": str(output_path / "checkpoints"),
         "log-dir": str(output_path / "logs"),
     }
+    d2t_path = output_path / "vocab_mapping" / "d2t.npy"
+    t2d_path = output_path / "vocab_mapping" / "t2d.npy"
     if vocab_mapping_args is not None:
         vma_dict = vocab_mapping_args._asdict()
         vma_dict["token-freq-path"] = str(combined_token_freq_path)
@@ -331,8 +333,9 @@ def run_e2e(
             [".[datagen]"],
             use_uv=not is_npu_available(),
         )
-        ta_dict["d2t-path"] = str(output_path / "vocab_mapping" / "d2t.npy")
-        ta_dict["t2d-path"] = str(output_path / "vocab_mapping" / "t2d.npy")
+    if d2t_path.exists() and t2d_path.exists():
+        ta_dict["d2t-path"] = str(d2t_path)
+        ta_dict["t2d-path"] = str(t2d_path)
 
     ta_list = prepare_args(ta_dict)
 

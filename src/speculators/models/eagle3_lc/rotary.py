@@ -67,6 +67,19 @@ class DynamicYaRNRotaryEmbedding(LlamaRotaryEmbedding):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
 
+    @torch.no_grad()
+    @torch._dynamo.disable
+    def forward(self, x, position_ids):
+        """Run eagerly to prevent torch.compile recompilation.
+
+        The parent's ``@dynamic_rope_update`` decorator calls ``register_buffer``
+        to swap ``inv_freq`` at runtime, which invalidates compiled subgraphs and
+        causes ranks to desynchronise under FSDP. Disabling dynamo here forces the
+        entire rotary embedding (including the dynamic frequency update) to run
+        outside the compiled graph.
+        """
+        return super().forward(x, position_ids)
+
 
 class PartialRotaryEmbedding(nn.Module):
     """Qwen3-style partial rotary positional embedding.

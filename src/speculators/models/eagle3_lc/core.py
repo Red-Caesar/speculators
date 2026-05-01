@@ -71,11 +71,12 @@ class Eagle3LCDraftModel(Eagle3DraftModel):
                     transformer_layer_config.hidden_size
                     // transformer_layer_config.num_attention_heads,
                 )
-                n_rotated = int(head_dim * config.rope_partial_factor)
+                partial_factor = config.rope_partial_factor if config.rope_partial_factor is not None else 0.25
+                n_rotated = int(head_dim * partial_factor)
                 n_rotated = (n_rotated // 2) * 2
                 if n_rotated < 2:
                     raise ValueError(
-                        f"rope_partial_factor={config.rope_partial_factor} yields "
+                        f"rope_partial_factor={partial_factor} yields "
                         f"n_rotated={n_rotated} for head_dim={head_dim}. "
                         "Must be at least 2 (one rotation pair)."
                     )
@@ -101,7 +102,7 @@ class Eagle3LCDraftModel(Eagle3DraftModel):
             embed_requires_grad=kwargs.get("embed_requires_grad", False),
             rope_method=kwargs.get("rope_method", "full"),
             rope_scaling_config=kwargs.get("rope_scaling_config"),
-            rope_partial_factor=kwargs.get("rope_partial_factor", 0.25),
+            rope_partial_factor=kwargs.get("rope_partial_factor"),
             speculators_config=SpeculatorsConfig(
                 algorithm="eagle3_lc",
                 proposal_methods=[
