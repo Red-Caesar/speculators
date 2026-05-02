@@ -66,6 +66,7 @@ class DynamicYaRNRotaryEmbedding(LlamaRotaryEmbedding):
 
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
+        self.original_attention_scaling = self.attention_scaling
 
     @torch.no_grad()
     @torch._dynamo.disable
@@ -77,7 +78,14 @@ class DynamicYaRNRotaryEmbedding(LlamaRotaryEmbedding):
         causes ranks to desynchronise under FSDP. Disabling dynamo here forces the
         entire rotary embedding (including the dynamic frequency update) to run
         outside the compiled graph.
+
+        The decorator resets ``inv_freq`` to base frequencies for short sequences but
+        does not reset ``attention_scaling``.  We restore it here so that short-context
+        inference after a long-context forward does not inherit the YaRN mscale.
         """
+        seq_len = int(position_ids.max().item()) + 1
+        if seq_len <= self.original_max_seq_len:
+            self.attention_scaling = self.original_attention_scaling
         return super().forward(x, position_ids)
 
 

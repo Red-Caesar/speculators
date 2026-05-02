@@ -174,7 +174,12 @@ class Trainer:
                 **gpu_batch, **self.config.train_call_kwargs
             )
 
-            if torch.isnan(loss) or torch.isinf(loss):
+            skip = torch.isnan(loss) or torch.isinf(loss)
+            if self.is_distributed:
+                skip_flag = torch.tensor(float(skip), device=loss.device)
+                dist.all_reduce(skip_flag, op=dist.ReduceOp.MAX)
+                skip = skip_flag.item() > 0
+            if skip:
                 root_logger.warning(
                     f"NaN/Inf loss at step {self.global_step}, skipping batch."
                 )
