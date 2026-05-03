@@ -298,7 +298,7 @@ def run_e2e(
             "data_generation_offline.py",
             dga_list,
             [".[datagen]"],
-            use_uv=not is_npu_available(),
+            use_uv=False,
         )
 
     # Combine token frequency files from all datasets into a single file.
@@ -331,7 +331,7 @@ def run_e2e(
             "build_vocab_mapping.py",
             vma_list,
             [".[datagen]"],
-            use_uv=not is_npu_available(),
+            use_uv=False,
         )
     if d2t_path.exists() and t2d_path.exists():
         ta_dict["d2t-path"] = str(d2t_path)
@@ -356,5 +356,5 @@ def run_e2e(
         ta_list,
         packages,
         python_alt=f"torchrun --standalone --nproc_per_node={device_count}",
-        use_uv=not local_train_env,
+        use_uv=False,
     )
