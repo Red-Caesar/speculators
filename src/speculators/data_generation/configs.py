@@ -25,6 +25,15 @@ def _normalize_ultrachat(example: dict) -> dict:
     return example
 
 
+def _normalize_longalpaca(example: dict) -> dict:
+    return {
+        "conversations": [
+            {"role": "user", "content": example.get("instruction", "")},
+            {"role": "assistant", "content": example.get("output", "")},
+        ]
+    }
+
+
 DATASET_CONFIGS: dict[str, DatasetConfig] = {
     "sharegpt": DatasetConfig(
         name="sharegpt",
@@ -36,5 +45,11 @@ DATASET_CONFIGS: dict[str, DatasetConfig] = {
         hf_path="HuggingFaceH4/ultrachat_200k",
         split="train_sft",
         normalize_fn=_normalize_ultrachat,
+    ),
+    "longalpaca": DatasetConfig(
+        name="longalpaca",
+        hf_path="Yukang/LongAlpaca-16k-length",
+        split="train",
+        normalize_fn=_normalize_longalpaca,
     ),
 }

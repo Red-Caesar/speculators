@@ -390,6 +390,17 @@ def build_eagle3_dataset(
     )
 
     dataset.set_format(type="torch")
+
+    before = len(dataset)
+    dataset = dataset.filter(
+        lambda x: x["loss_mask"].sum() > 0,
+        num_proc=num_proc,
+        load_from_cache_file=True,
+    )
+    dropped = before - len(dataset)
+    if dropped:
+        log.info(f"Dropped {dropped}/{before} samples with no assistant tokens after truncation")
+
     return dataset
 
 
