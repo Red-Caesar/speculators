@@ -2,6 +2,7 @@ import argparse
 import json
 import random
 import warnings
+from typing import Dict, Any
 
 import numpy as np
 import torch
@@ -98,7 +99,11 @@ def setup_dataloader(
 
 
 def create_transformer_layer_config(
-    verifier_name_or_path: str, num_layers: int, draft_arch: str = "llama"
+    verifier_name_or_path: str, 
+    num_layers: int,
+    draft_arch: str = "llama",
+    rope_scaling: Dict[str, Any] | None = None,
+    partial_rotary_factor: float | None = None,
 ) -> PretrainedConfig:
     if draft_arch not in DRAFT_ARCH_CONFIGS:
         raise ValueError(
@@ -133,15 +138,18 @@ def create_transformer_layer_config(
         initializer_range=verifier_config.initializer_range,
         rms_norm_eps=verifier_config.rms_norm_eps,
         head_dim=getattr(verifier_config, "head_dim", None),
+        rope_scaling=rope_scaling,
     )
+    if partial_rotary_factor is not None:
+        transformer_layer_config.partial_rotary_factor = partial_rotary_factor
     transformer_layer_config._attn_implementation = "simple_flex_attention"  # noqa: SLF001
     return transformer_layer_config
 
 
 def main(args: argparse.Namespace):
     # Parse JSON rope_scaling_config string if provided
-    if args.rope_scaling_config is not None:
-        args.rope_scaling_config = json.loads(args.rope_scaling_config)
+    if args.rope_scaling is not None:
+        args.rope_scaling = json.loads(args.rope_scaling)
 
     # Set random seed for reproducibility
     set_seed(args.seed, args.deterministic_cuda)
@@ -178,7 +186,11 @@ def main(args: argparse.Namespace):
 
     # Setup speculator config
     transformer_layer_config = create_transformer_layer_config(
-        args.verifier_name_or_path, args.num_layers, draft_arch=args.draft_arch
+        args.verifier_name_or_path, 
+        args.num_layers,
+        draft_arch=args.draft_arch,
+        rope_scaling=args.rope_scaling,
+        partial_rotary_factor=args.partial_rotary_factor,
     )
 
     # Get model class from registry and create model using its factory method
@@ -331,40 +343,24 @@ def parse_args():
     parser.add_argument("--scheduler-num-cosine-cycles", type=float, default=0.5)
     # Eagle3LC RoPE options
     parser.add_argument(
-        "--rope-method",
-        type=str,
-        default="full",
-        choices=["full", "yarn", "dynamic_yarn", "llama3", "partial"],
-        help=(
-            "RoPE variant for eagle3_lc speculator. "
-            "full: standard Eagle3 RoPE (no change). "
-            "yarn: static YaRN frequency scaling (requires --rope-scaling-config). "
-            "dynamic_yarn: YaRN that reverts to standard RoPE for short sequences "
-            "(requires --rope-scaling-config). "
-            "llama3: Llama-3.1 RoPE scaling (requires --rope-scaling-config). "
-            "partial: Qwen3-style partial RoPE applying rotation to the first "
-            "rope-partial-factor fraction of head dimensions."
-        ),
-    )
-    parser.add_argument(
-        "--rope-scaling-config",
+        "--rope-scaling",
         type=str,
         default=None,
         help=(
             "JSON string with RoPE scaling parameters for yarn or llama3 methods. "
-            "Example yarn: '{\"rope_type\": \"yarn\", \"factor\": 4.0, "
+            "Example yarn: '{\"type\": \"yarn\", \"factor\": 4.0, "
             "\"original_max_position_embeddings\": 8192}'. "
-            "Example llama3: '{\"rope_type\": \"llama3\", \"factor\": 8.0, "
+            "Example llama3: '{\"type\": \"llama3\", \"factor\": 8.0, "
             "\"low_freq_factor\": 1.0, \"high_freq_factor\": 4.0, "
             "\"original_max_position_embeddings\": 8192}'."
         ),
     )
     parser.add_argument(
-        "--rope-partial-factor",
+        "--partial-rotary-factor",
         type=float,
-        default=0.25,
+        default=None,
         help=(
-            "Fraction of head dimensions to apply RoPE to when --rope-method=partial "
+            "Fraction of head dimensions to apply RoPE."
             "Default: 0.25 (first 25%% of head dimensions)."
         ),
     )

@@ -144,10 +144,13 @@ class SingleGPUCheckpointer(BaseCheckpointer):
         model: PreTrainedModel,  # noqa: ARG002
         optimizer: torch.optim.Optimizer,
         float_dtype: torch.dtype | None = None,
-    ):
+    ) -> bool:
+        optimizer_path = self.optimizer_path(self.previous_epoch)
+        if not optimizer_path.exists():
+            return False
         device = get_current_device()
         full_state_dict = torch.load(
-            self.optimizer_path(self.previous_epoch),
+            optimizer_path,
             weights_only=True,
             map_location=device,
         )
@@ -155,6 +158,7 @@ class SingleGPUCheckpointer(BaseCheckpointer):
             full_state_dict, float_dtype or model.dtype
         )
         optimizer.load_state_dict(full_state_dict)
+        return True
 
     def save_checkpoint(
         self,
@@ -195,9 +199,12 @@ class DistributedCheckpointer(BaseCheckpointer):
         model,
         optimizer: torch.optim.Optimizer,
         float_dtype: torch.dtype | None = None,
-    ):
+    ) -> bool:
+        optimizer_path = self.optimizer_path(self.previous_epoch)
+        if not optimizer_path.exists():
+            return False
         full_state_dict = torch.load(
-            self.optimizer_path(self.previous_epoch),
+            optimizer_path,
             mmap=True,
             weights_only=True,
             map_location="cpu",
@@ -213,6 +220,7 @@ class DistributedCheckpointer(BaseCheckpointer):
             options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True),
         )
         dist.barrier()
+        return True
 
     def save_checkpoint(
         self,

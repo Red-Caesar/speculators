@@ -1,15 +1,82 @@
 # ruff: noqa: ERA001
-from typing import Any
+from typing import Any, Callable
 
 import torch
 from transformers import Cache, LlamaConfig, PretrainedConfig
-from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaRMSNorm
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+from transformers.models.llama.modeling_llama import (
+    LlamaAttention,
+    LlamaDecoderLayer,
+    LlamaRMSNorm,
+    apply_rotary_pos_emb,
+    eager_attention_forward,
+)
 from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
 from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer, Qwen3RMSNorm
 from transformers.processing_utils import Unpack
 from transformers.utils.generic import TransformersKwargs
 
 from speculators.models import base_components
+
+
+class LlamaPartialRoPEAttention(LlamaAttention):
+    """LlamaAttention with vLLM-compatible partial RoPE.
+
+    When cos/sin have fewer dims than head_dim (partial_rotary_factor < 1.0),
+    applies RoPE only to the first rot_dim dimensions and leaves the rest unchanged,
+    matching vLLM's PartialRotaryEmbedding inference behavior.
+    """
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask,
+        past_key_values=None,
+        cache_position=None,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+
+        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+        cos, sin = position_embeddings
+        rot_dim = cos.shape[-1]
+        if rot_dim < self.head_dim:
+            q_rot, q_pass = query_states[..., :rot_dim], query_states[..., rot_dim:]
+            k_rot, k_pass = key_states[..., :rot_dim], key_states[..., rot_dim:]
+            q_rot, k_rot = apply_rotary_pos_emb(q_rot, k_rot, cos, sin)
+            query_states = torch.cat([q_rot, q_pass], dim=-1)
+            key_states = torch.cat([k_rot, k_pass], dim=-1)
+        else:
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        if past_key_values is not None:
+            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+            key_states, value_states = past_key_values.update(
+                key_states, value_states, self.layer_idx, cache_kwargs
+            )
+
+        attention_interface = eager_attention_forward
+        if self.config._attn_implementation != "eager":
+            attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
+        attn_output, attn_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=0.0 if not self.training else self.attention_dropout,
+            scaling=self.scaling,
+            **kwargs,
+        )
+        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        attn_output = self.o_proj(attn_output)
+        return attn_output, attn_weights
 
 
 class Eagle3FirstLayerMixin:

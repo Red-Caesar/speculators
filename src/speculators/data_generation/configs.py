@@ -34,6 +34,12 @@ def _normalize_longalpaca(example: dict) -> dict:
     }
 
 
+def _normalize_longalign(example: dict) -> dict:
+    if "messages" in example:
+        return {"conversations": example["messages"]}
+    return example
+
+
 DATASET_CONFIGS: dict[str, DatasetConfig] = {
     "sharegpt": DatasetConfig(
         name="sharegpt",
@@ -51,5 +57,11 @@ DATASET_CONFIGS: dict[str, DatasetConfig] = {
         hf_path="Yukang/LongAlpaca-16k-length",
         split="train",
         normalize_fn=_normalize_longalpaca,
+    ),
+    "longalign": DatasetConfig(
+        name="longalign",
+        hf_path="THUDM/LongAlign-10k",
+        split="train",
+        normalize_fn=_normalize_longalign,
     ),
 }

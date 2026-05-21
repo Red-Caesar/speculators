@@ -14,7 +14,7 @@ from speculators.models.eagle3.attention import (
     create_combined_mask_mod,
     extend_mask_for_draft_tokens,
 )
-from speculators.models.eagle3.model_definitions import model_classes
+from speculators.models.eagle3.model_definitions import LlamaPartialRoPEAttention, model_classes
 from speculators.proposals.greedy import GreedyTokenProposalConfig
 from speculators.utils.loading import load_model_layers
 
@@ -217,6 +217,7 @@ class Eagle3DraftModel(SpeculatorModel):
         self._setup_decoder_layers(
             config.transformer_layer_config, config.norm_before_residual
         )
+        self._patch_partial_rope_attention(config.transformer_layer_config)
         self.norm = self._model_definitions.norm_class(
             self.hidden_size, eps=config.transformer_layer_config.rms_norm_eps
         )
@@ -247,6 +248,19 @@ class Eagle3DraftModel(SpeculatorModel):
             ]
         )
         self.layers = torch.nn.ModuleList(layers)
+
+    def _patch_partial_rope_attention(self, transformer_layer_config: PretrainedConfig) -> None:
+        partial = getattr(transformer_layer_config, "partial_rotary_factor", 1.0)
+        if partial == 1.0:
+            return
+        for layer in self.layers:
+            old = layer.self_attn
+            new = LlamaPartialRoPEAttention(old.config, old.layer_idx)
+            new.q_proj = old.q_proj
+            new.k_proj = old.k_proj
+            new.v_proj = old.v_proj
+            new.o_proj = old.o_proj
+            layer.self_attn = new
 
     def _setup_rotary_embedding(self, transformer_layer_config: PretrainedConfig):
         # Create a modified config for the rotary embedding to use 2x the hidden size

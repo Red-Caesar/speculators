@@ -134,9 +134,8 @@ class TrainArgs(NamedTuple):
     scheduler_num_cosine_cycles: float | _NS = _NOTSET
     # Eagle3LC-specific fields
     speculator_type: str | _NS = _NOTSET
-    rope_method: str | _NS = _NOTSET
-    rope_scaling_config: str | _NS = _NOTSET
-    rope_partial_factor: float | _NS = _NOTSET
+    rope_scaling: str | _NS = _NOTSET
+    partial_rotary_factor: float | _NS = _NOTSET
 
 
 ### END OF SCRIPT ARGUMENTS ###

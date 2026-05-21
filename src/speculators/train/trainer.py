@@ -91,18 +91,21 @@ class Trainer:
         if self.is_distributed:
             apply_fully_sharded(self.model)
 
+            acc = torch.accelerator.current_accelerator()
+            for m in self.model.layers.children():  # type: ignore[union-attr]
+                if not isinstance(m, FSDPModule):
+                    continue
+                if acc is None:
+                    m.to_empty(device="cuda")  # type: ignore[attr-defined]
+                else:
+                    m.to_empty(device=acc.type)  # type: ignore[attr-defined]
+
             if self.resume_from_checkpoint and self.checkpointer.previous_epoch != -1:
                 self.checkpointer.load_model_state_dict(self.model)
             else:
                 for m in self.model.layers.children():  # type: ignore[union-attr]
                     if not isinstance(m, FSDPModule):
                         continue
-                    acc = torch.accelerator.current_accelerator()
-                    if acc is None:
-                        m.to_empty(device="cuda")  # type: ignore[attr-defined]
-                    else:
-                        acc_type = acc.type
-                        m.to_empty(device=acc_type)  # type: ignore[attr-defined]
                     for sub_module in m.modules():  # type: ignore[attr-defined]
                         if hasattr(sub_module, "reset_parameters"):
                             sub_module.reset_parameters()  # type: ignore[operator]
@@ -117,8 +120,9 @@ class Trainer:
         self.opt = torch.optim.AdamW(self.model.named_parameters(), lr=self.config.lr)
         last_epoch = -1
         if self.resume_from_checkpoint and self.checkpointer.previous_epoch != -1:
-            self.checkpointer.load_optimizer_state_dict(self.model, self.opt)
-            last_epoch = self.checkpointer.previous_epoch
+            loaded = self.checkpointer.load_optimizer_state_dict(self.model, self.opt)
+            if loaded:
+                last_epoch = self.checkpointer.previous_epoch
 
         # Setup scheduler
         if self.config.scheduler_type == "none":
